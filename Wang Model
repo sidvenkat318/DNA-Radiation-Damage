@@ -1,0 +1,315 @@
+'Cell Survival Curves'
+
+import math
+import matplotlib.pyplot as plt
+import pandas as pd
+
+'Close all figure windows'
+plt.close("all")
+
+'Input and Output'
+
+D = list(range(1, 13))  # Dose (grey)
+S_cell = [[1], [1]]  # Cell survival list for each cell (begins with 1 for D=0 Gy)
+
+'Cell data (HSG, V79)'
+R = [6, 5]  # Radius (um)
+p = [6.24, 4]  # Density (g/cm^3)
+ux = [0.9817, 0.9568]
+uy = [0.0891, 0.03]
+xi = [0.1025, 0.0412]
+zeta = [0.0572, 0.0608]
+n_lambda_1 = [7.26e-4, 9.78e-4]
+n_lambda_inf = [0.0022, 0.0065]
+
+'X-ray data' # p=proton
+LET_p = 1  # keV/um
+Yp = 50  # DSB yield/cell/grey
+
+'''
+IMPORTANT!!!!:
+You're going to have to use webplotdigitizer and generate your own csv file for all the data below.
+Then copy the path of the csv for each pd.read_csv command.
+'''
+
+'C12 data'
+df_C12 = pd.read_csv(r"C:\Users\14405\Downloads\C-12.csv", header=None)
+LET_C12 = df_C12.iloc[:, 0].tolist()
+Y_C12 = df_C12.iloc[:, 1].tolist()
+Lambda_C12 = df_C12.iloc[:, 2].tolist()
+print("LET C12 = ", LET_C12)
+print("Y C12 = ", Y_C12)
+print("Length of Y C12 = ", len(Y_C12))
+
+'Their HSG X-ray data'
+df_HSG_xray=pd.read_csv(r"C:\Users\14405\Downloads\HSG x-ray.csv", header=None)
+D_HSG=df_HSG_xray.iloc[:, 0].tolist()
+S_HSG=df_HSG_xray.iloc[:, 1].tolist()
+
+'Their V79 X-ray data'
+df_V79_xray=pd.read_csv(r"C:\Users\14405\Downloads\V-79 x-ray.csv", header=None)
+D_V79=df_V79_xray.iloc[:, 0].tolist()
+S_V79=df_V79_xray.iloc[:, 1].tolist()
+
+'Their HSG alpha data'
+df_HSG_alpha=pd.read_csv(r"C:\Users\14405\Downloads\HSG Alpha.csv", header=None)
+LET_alpha_HSG_wang=df_HSG_alpha.iloc[:, 0].tolist()
+alpha_HSG_wang=df_HSG_alpha.iloc[:, 1].tolist()
+
+'Their V79 alpha data'
+df_V79_alpha=pd.read_csv(r"C:\Users\14405\Downloads\V-79 Alpha.csv", header=None)
+LET_alpha_V79_wang=df_V79_alpha.iloc[:, 0].tolist()
+alpha_V79_wang=df_V79_alpha.iloc[:, 1].tolist()
+
+'Their HSG beta data'
+df_HSG_beta=pd.read_csv(r"C:\Users\14405\Downloads\HSG Beta.csv", header=None)
+LET_beta_HSG_wang=df_HSG_beta.iloc[:, 0].tolist()
+beta_HSG_wang=df_HSG_beta.iloc[:, 1].tolist()
+
+'Their V79 beta data'
+df_V79_beta=pd.read_csv(r"C:\Users\14405\Downloads\V-79 Beta.csv", header=None)
+LET_beta_V79_wang=df_V79_beta.iloc[:, 0].tolist()
+beta_V79_wang=df_V79_beta.iloc[:, 1].tolist()
+
+'Their Alpha/Beta ratio data'
+df_ab=pd.read_csv(r"C:\Users\14405\Downloads\Alpha-Beta-ratio.csv", header=None)
+LET_ab=df_ab.iloc[:, 0].tolist()
+ab_wang=df_ab.iloc[:, 1].tolist()
+
+
+'Functions from Wang et. al'
+def N_fun(Y, D):  # Average number of induced DSBs
+    return Y * D
+
+def n_fun(R, D, p, LET):  # Number of primary particles passing through
+    return (math.pi * R ** 2 * D * p * 10) / (LET * 1.602)
+
+def Lambda_fun(N, n):  # DSB yield/cell/primary particle
+    return N / n
+
+def Np_fun(n, Lambda):  # Average number of primary particles that cause DSBs
+    return n * (1 - math.exp(-Lambda))
+
+def lambda_p_fun(Lambda):  # Average number of DSBs yielded by each primary partcile that causes DSBs
+    return Lambda / (1 - math.exp(-Lambda))
+
+def n_lambda_p_fun(n_lambda_inf, n_lambda_1, lambda_p):
+    return n_lambda_inf - (n_lambda_inf - n_lambda_1) / lambda_p
+
+def P_int_fun(n_lambda_p, Np):  # Interaction
+    return (1 - math.exp(-n_lambda_p * Np)) / (n_lambda_p * Np)
+
+def P_track_fun(xi, lambda_p):
+    return (1 - math.exp(-xi * lambda_p)) / (xi * lambda_p)
+
+def P_correct_fun(ux, P_int, P_track):
+    return ux * P_int * P_track
+
+def P_cont_fun(zeta, lambda_p):  # Contribution
+    return (1 - math.exp(-zeta * lambda_p)) / (zeta * lambda_p)
+
+def N_death_fun(uy, N, P_cont, P_correct):
+    return uy * N * P_cont * (1 - P_correct)
+
+def S_fun(N_death):
+    return 1 / (math.exp(N_death))
+
+def alpha_fun(Y, P_cont, ux, P_track, uy):
+    return Y * P_track * (1 - (ux * P_cont)) * uy
+
+def beta_fun(n_lambda_p, Y, lambda_p, P_cont, P_track, ux, uy):
+    return 0.5 * n_lambda_p * (Y / lambda_p) * Y * P_cont * P_track * (ux * uy)
+
+def S2_fun(alpha, beta, D):
+    return math.exp(-((alpha*D)+(beta*D**2)))
+
+
+'Loop calculating survival of each type of cell per radiation dose for protons'
+for i in range(len(R)):
+    for d in D:
+        N = N_fun(Yp, d)
+        n = n_fun(R[i], d, p[i], LET_p)
+        Lambda = Lambda_fun(N, n)
+        Np = Np_fun(n, Lambda)
+        lambda_p = lambda_p_fun(Lambda)
+        n_lambda_p = n_lambda_p_fun(n_lambda_inf[i], n_lambda_1[i], lambda_p)
+        P_int = P_int_fun(n_lambda_p, Np)
+        P_track = P_track_fun(xi[i], lambda_p)
+        P_correct = P_correct_fun(ux[i], P_int, P_track)
+        P_cont = P_cont_fun(zeta[i], lambda_p)
+        N_death = N_death_fun(uy[i], N, P_cont, P_correct)
+        S = S_fun(N_death)
+        S_cell[i].append(S)
+
+'Loop calculating Cell Death for C-12 ions'
+
+# HSG Cells
+S_LET_HSG = [[1] for _ in range(len(Y_C12))]
+for i in range(len(Y_C12)):
+    for d in D:
+        N = N_fun(Y_C12[i], d)
+        n = n_fun(R[0], d, p[0], LET_C12[i])
+        # Lambda = Lambda_fun(N, n)
+        Np = Np_fun(n, Lambda_C12[i])
+        lambda_p = lambda_p_fun(Lambda_C12[i])
+        n_lambda_p = n_lambda_p_fun(n_lambda_inf[0], n_lambda_1[0], lambda_p)
+        P_int = P_int_fun(n_lambda_p, Np)
+        P_track = P_track_fun(xi[0], lambda_p)
+        P_correct = P_correct_fun(ux[0], P_int, P_track)
+        P_cont = P_cont_fun(zeta[0], lambda_p)
+        N_death = N_death_fun(uy[0], N, P_cont, P_correct)
+        alpha=alpha_fun(Y_C12[i], P_cont, ux[0], P_track, uy[0])
+        beta=beta_fun(n_lambda_p, Y_C12[i], lambda_p, P_cont, P_track, ux[0], uy[0])
+        S = S2_fun(alpha, beta, d)
+        S_LET_HSG[i].append(S)
+print("S for HSG =", S_LET_HSG)
+
+# V79 Cells
+S_LET_V79 = [[1] for _ in range(len(Y_C12))]
+for i in range(len(Y_C12)):
+    for d in D:
+        N = N_fun(Y_C12[i], d)
+        n = n_fun(R[1], d, p[1], LET_C12[i])
+        # Lambda = Lambda_fun(N, n)
+        Np = Np_fun(n, Lambda_C12[i])
+        lambda_p = lambda_p_fun(Lambda_C12[i])
+        n_lambda_p = n_lambda_p_fun(n_lambda_inf[1], n_lambda_1[1], lambda_p)
+        P_int = P_int_fun(n_lambda_p, Np)
+        P_track = P_track_fun(xi[1], lambda_p)
+        P_correct = P_correct_fun(ux[1], P_int, P_track)
+        P_cont = P_cont_fun(zeta[1], lambda_p)
+        N_death = N_death_fun(uy[1], N, P_cont, P_correct)
+        alpha=alpha_fun(Y_C12[i], P_cont, ux[1], P_track, uy[1])
+        beta=beta_fun(n_lambda_p, Y_C12[i], lambda_p, P_cont, P_track, ux[1], uy[1])
+        S = S2_fun(alpha, beta, d)
+        S_LET_V79[i].append(S)
+print("S for V79 =", S_LET_V79)
+D.insert(0, 0) # Make the first dose for each cell 0 gy
+
+'Alpha and Beta calculations for both cells'
+alpha_cell = [[], []]
+beta_cell = [[], []]
+for i in range(len(R)):
+    for j in range(len(LET_C12)):
+        dose = 1
+        N = N_fun(Y_C12[j], dose)
+        n = n_fun(R[i], dose, p[i], LET_C12[j])
+        # Lambda = Lambda_fun(N, n)
+        Np = Np_fun(n, Lambda_C12[j])
+        lambda_p = lambda_p_fun(Lambda_C12[j])
+        n_lambda_p = n_lambda_p_fun(n_lambda_inf[i], n_lambda_1[i], lambda_p)
+        P_int = P_int_fun(n_lambda_p, Np)
+        P_track = P_track_fun(xi[i], lambda_p)
+        P_correct = P_correct_fun(ux[i], P_int, P_track)
+        P_cont = P_cont_fun(zeta[i], lambda_p)
+        alpha = alpha_fun(Y_C12[j], P_cont, ux[i], P_track, uy[i])
+        alpha1=Y_C12[j]*((1-math.exp(-zeta[i]*lambda_p))/(zeta[i]*lambda_p))*(1-ux[i]*((1-math.exp(-xi[i]*lambda_p))/(xi[i]*lambda_p)))*uy[i]
+        alpha_cell[i].append(alpha)
+        beta = beta_fun(n_lambda_p, Y_C12[j], lambda_p, P_cont, P_track, ux[i], uy[i])
+        beta_cell[i].append(beta)
+
+'Plotting'
+
+# Figure 1: X-Ray vs Dose
+labels = [f"X-ray at {LET_p} keV/um","Wang results"]
+with plt.xkcd():
+    fig1, (ax1, ax2) = plt.subplots(1, 2)
+
+    ax1.plot(D, S_cell[0], marker="o",color='blue')
+    ax1.plot(D_HSG,S_HSG,color='blue',linestyle='--',linewidth=3)
+    ax1.set_ylabel("Surviving Fraction")
+    ax1.set_xlabel("Radiation Dose (Gy)")
+    ax1.set_yscale("log")
+    ax1.set_title("HSG Cells")
+
+    ax2.plot(D, S_cell[1], marker="o",color='blue')
+    ax2.plot(D_V79,S_V79,color='blue',linestyle='--',linewidth=3)
+    ax2.set_xlabel("Radiation Dose (Gy)")
+    ax2.set_yscale("log")
+    ax2.set_title("V79 Cells")
+    ax2.legend(labels, loc="upper right")
+
+    fig1.suptitle('Cell Survival', x=0.53, y=0.98, ha='center', fontsize=24)
+    plt.tight_layout()
+    plt.show()
+
+# Figure 2: Alpha
+labels = [f"C-12 at {dose} Gy","Wang results","Alleged Wang Alpha"]
+with plt.xkcd():
+    fig2, (ax1, ax2) = plt.subplots(1, 2)
+
+    ax1.plot(LET_C12, alpha_cell[0], marker="o", color="red")
+    ax1.plot(LET_alpha_HSG_wang,alpha_HSG_wang,color='red',linestyle='--',linewidth=3)
+    ax1.set_ylabel(r'$\alpha$ (Gy$^{-1}$)')
+    ax1.set_xlabel("LET (keV/um)")
+    ax1.set_xscale("log")
+    ax1.set_xticks([10, 100, 1000], [10, 100, 1000])
+    ax1.set_title("HSG Cells")
+
+    ax2.plot(LET_C12, alpha_cell[1], marker="o", color="red")
+    ax2.plot(LET_alpha_V79_wang,alpha_V79_wang,color='red',linestyle='--',linewidth=3)
+    ax2.set_xlabel("LET (keV/um)")
+    ax2.set_xscale("log")
+    ax2.set_xticks([10, 100, 1000], [10, 100, 1000])
+    ax2.set_title("V79 Cells")
+    ax2.legend(labels, loc="upper right")
+
+    fig2.suptitle('Alpha for Varying LETs of C-12 Ions', x=0.53, y=0.98, ha='center', fontsize=24)
+    plt.tight_layout()
+    plt.show()
+
+# Figure 3: Beta
+labels = [f"C-12 at {dose} Gy",'Wang results']
+with plt.xkcd():
+    fig3, (ax1, ax2) = plt.subplots(1, 2)
+
+    ax1.plot(LET_C12, beta_cell[0], marker="o", color="red")
+    ax1.plot(LET_beta_HSG_wang,beta_HSG_wang,color='red',linestyle='--',linewidth=3)
+    ax1.set_ylabel(r'$\beta$ (Gy$^{-2}$)')
+    ax1.set_xlabel("LET (keV/um)")
+    ax1.set_xscale("log")
+    ax1.set_xticks([10, 100, 1000], [10, 100, 1000])
+    ax1.set_title("HSG Cells")
+
+    ax2.plot(LET_C12, beta_cell[1], marker="o", color="red")
+    ax2.plot(LET_beta_V79_wang,beta_V79_wang,color='red',linestyle='--',linewidth=3)
+    ax2.set_xlabel("LET (keV/um)")
+    ax2.set_xscale("log")
+    ax2.set_xticks([10, 100, 1000], [10, 100, 1000])
+    ax2.set_title("V79 Cells")
+    ax2.legend(labels, loc="upper right")
+
+    fig3.suptitle('Beta for Varying LETs of C-12 Ions', x=0.53, y=0.98, ha='center', fontsize=24)
+    plt.tight_layout()
+    plt.show()
+
+# Figure 4: Cell survival for varying LET
+colors = ['red', 'green', 'blue', 'orange', 'purple', 'pink', 'brown',
+          'gray', 'cyan', 'magenta', 'yellow', 'teal', 'navy', 'olive']
+labels = [f"LET = {LET: 0.2f}" for LET in LET_C12]
+labels.insert(0, "X-ray")
+print(labels)
+
+plt.style.use('fivethirtyeight')
+fig4, (ax3, ax4) = plt.subplots(1, 2)
+
+ax3.plot(D, S_cell[0], marker="o", color='k')
+for i in range(len(S_LET_HSG)):
+    ax3.plot(D, S_LET_HSG[i], marker="o", color=colors[i])
+ax3.set_xlabel("Dose (Gy)")
+ax3.set_ylim([1e-4, 1])
+ax3.set_ylabel("Surviving Fraction")
+ax3.set_yscale("log")
+ax3.set_title("HSG Cells")
+
+ax4.plot(D, S_cell[1], marker="o", color='k')
+for i in range(len(S_LET_V79)):
+    ax4.plot(D, S_LET_V79[i], marker="o", color=colors[i])
+ax4.set_xlabel("Dose (Gy)")
+ax4.set_ylim([1e-4, 1])
+ax4.set_yscale("log")
+ax4.set_title("V79 Cells")
+ax4.legend(labels, bbox_to_anchor=(0.75, 1.12), loc="upper left")
+
+fig4.suptitle('Cell Survival for C-12 Ions with Varying LET', x=0.5, y=0.98, ha='center', fontsize=24)
+plt.show()
