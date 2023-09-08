@@ -1,0 +1,235 @@
+import pandas as pd
+import numpy as np
+import matplotlib.pyplot as plt
+
+plt.close("all")
+
+
+D = list(range(1, 13))  # Dose (grey)
+S_cell = [[1], [1]]  # Cell survival list for each cell (begins with 1 for D=0 Gy)
+
+# Cell data
+r = [6, 5]  # Radius (um)
+p = [6.24, 4]  # Density (g/cm^3)
+ux = [0.9817, 0.9568]
+uy = [0.0891, 0.03]
+xi = [0.1025, 0.0412]
+zeta = [0.0572, 0.0608]
+n_lambda_1 = [7.26e-4, 9.78e-4]
+n_lambda_inf = [0.0022, 0.0065]
+
+# X-ray data
+LET_p = 1  # keV/um
+LET=30 # C-12 LET keV/um
+Yp = 50  # DSB yield/cell/grey
+
+
+# Functions from Wang et. al
+def N_fun(Y, D):  # Average number of induced DSBs
+    return Y * D
+
+
+def n_fun(r, D, p, LET):  # Number of primary particles passing through
+    return (np.pi * r ** 2 * D * p * 10) / (LET * 1.602)
+
+
+def Lambda_fun(N, n):  # DSB yield/cell/primary particle
+    return N / n
+
+
+def Np_fun(n, Lambda):  # Average number of primary particles that cause DSBs
+    return n * (1 -np.exp(-Lambda))
+
+
+def lambda_p_fun(Lambda):  # Average number of DSBs yielded by each primary partcile that causes DSBs
+    return Lambda / (1 -np.exp(-Lambda))
+
+
+def n_lambda_p_fun(n_lambda_inf, n_lambda_1, lambda_p):
+    return n_lambda_inf - (n_lambda_inf - n_lambda_1) / lambda_p
+
+
+def P_int_fun(n_lambda_p, Np):  # Interaction
+    return (1 -np.exp(-n_lambda_p * Np)) / (n_lambda_p * Np)
+
+
+def P_track_fun(xi, lambda_p):
+    return (1 -np.exp(-xi * lambda_p)) / (xi * lambda_p)
+
+
+def P_correct_fun(ux, P_int, P_track):
+    return ux * P_int * P_track
+
+
+def P_cont_fun(zeta, lambda_p):  # Contribution
+    return (1 -np.exp(-zeta * lambda_p)) / (zeta * lambda_p)
+
+
+def N_death_fun(uy, N, P_cont, P_correct):
+    return uy * N * P_cont * (1 - P_correct)
+
+
+def S_fun(N_death):
+    return 1 / np.exp(N_death)
+
+
+def alpha_fun(Y, P_cont, ux, P_track, uy):
+    return Y * P_cont * (1 - (ux * P_track)) * uy
+
+
+def beta_fun(n_lambda_p, Y, lambda_p, P_cont, P_track, ux, uy):
+    return 0.5 * n_lambda_p * (Y / lambda_p) * Y * P_cont * P_track * (ux * uy)
+
+def S2_fun(alpha, beta, D):
+    return np.exp(-((alpha*D)+(beta*D**2)))
+
+
+# Indirect damage model
+
+eta = 1  # Concentration of bases per cell
+N0 = 1.41e6  # Initial concentration of cells (cells/ml)
+x2 = 8e9  # Rate constant for DNA bases (guanine)
+#q = x2 / N0  # Rate contant for DNA bases
+G = 0.027  # Hydroxyl radiolytic yield (umol/J)
+m = 4e-15  # mass of cell (g)
+delta=4.2 # radiosensitivity of water
+#base=3e9 # Number of bases per cell
+k=[5.1e9, 7.6e9, 6.3e9, 9.2e9, 2.1e9] # Reaction rate of OH with A,T,C,G,D5P
+n_conc=[3e9,3e9,3e9,3e9,3e9] # nucleotide concentration per cell
+C=[0.2,0.2,0.2,0.2,0.2] # percentage of hydroxyl radicals that react with associated nucleotide component
+t=[1,1,1,1,1] # Reaction time (s)
+
+def P_fun(D): # Production of hydroxyl radicals
+    return G*D*6.24e15*m
+
+def M_fun(P,C):  # Hydroxyl radical molarity
+    return (1/(6.022e23))*1e3*N0*P*C
+
+#def x1_fun(M):
+    #return eta * M #* ((1 -np.exp(x2 * (M - eta) * t)) / (eta - M *np.exp(x2 * (M - eta) * t)))
+
+def R_fun(n,M,k,t):
+    return n*M*((1-np.exp(k*(M-n)*t))/(n-M*np.exp(k*(M-n)*t))) 
+
+def Yid_fun(R):  # Indirect damage function (No. of DSBs)
+    return 6.022e20 * R/N0
+
+def Yd_fun(D):
+    return delta*D
+
+Yid_list=[[] for _ in range(len(D))]
+Yid_tot_list=[]
+for i in range(len(D)):
+    for j in range(len(k)):
+        # Indirect damage DSBs
+        P = P_fun(D[i])
+        M = M_fun(P,C[j])
+        R = R_fun(n_conc[j], M, k[j], t[j])
+        Yid = Yid_fun(R)
+        Yid_list[i].append(Yid)
+    Yid_tot=sum(Yid_list[i])
+    Yid_tot_list.append(Yid_tot)
+        
+# Loop calculating survival of each type of cell per radiation dose for protons
+for i in range(len(r)):
+    for j in range(len(D)):        
+        Yid=Yid_tot_list[j]
+        print("Y_id=",Yid)
+        N = N_fun(Yid, D[j])
+        n = n_fun(r[i], D[j], p[i], LET)
+        Lambda = Lambda_fun(N, n)
+        #N=Lambda*n
+        Np = Np_fun(n, Lambda)
+        lambda_p = lambda_p_fun(Lambda)
+        n_lambda_p = n_lambda_p_fun(n_lambda_inf[i], n_lambda_1[i], lambda_p)
+        P_int = P_int_fun(n_lambda_p, Np)
+        P_track = P_track_fun(xi[i], lambda_p)
+        P_correct = P_correct_fun(ux[i], P_int, P_track)
+        P_cont = P_cont_fun(zeta[i], lambda_p)
+        N_death_id = N_death_fun(uy[i], N, P_cont, P_correct)
+        alpha_id=alpha_fun(Yid, P_cont, ux[i], P_track, uy[i])
+        beta_id=beta_fun(n_lambda_p, Yid, lambda_p, P_cont, P_track, ux[i], uy[i])
+       
+        # Direct damage DSBs
+        Yd=Yd_fun(D[j])
+        print("Yd=",Yd)
+        N = N_fun(Yd, D[j])
+        n = n_fun(r[i], D[j], p[i], LET)
+        Lambda = Lambda_fun(N, n)
+        # Lambda=Yd
+        # N=Lambda*n
+        Np = Np_fun(n, Lambda)
+        lambda_p = lambda_p_fun(Lambda)
+        n_lambda_p = n_lambda_p_fun(n_lambda_inf[i], n_lambda_1[i], lambda_p)
+        P_int = P_int_fun(n_lambda_p, Np)
+        P_track = P_track_fun(xi[i], lambda_p)
+        P_correct = P_correct_fun(ux[i], P_int, P_track)
+        P_cont = P_cont_fun(zeta[i], lambda_p)
+        N_death_d = N_death_fun(uy[i], N, P_cont, P_correct)
+        alpha_d=alpha_fun(Yd, P_cont, ux[i], P_track, uy[i])
+        beta_d=beta_fun(n_lambda_p, Yd, lambda_p, P_cont, P_track, ux[i], uy[i])
+        
+        
+        C1=1
+        C2=1
+        N_death_tot=C1*N_death_d+C2*N_death_id
+        alpha=C1*alpha_d+C2*alpha_id
+        beta=C1*beta_d+C2*beta_id
+        S = S2_fun(alpha,beta,D[j])
+        S_cell[i].append(S)
+
+D.insert(0, 0)
+
+# C-12 Wang results at LET=30
+
+'''
+IMPORTANT!!!!:
+You're going to have to use webplotdigitizer and generate your own csv for all the data.
+Then copy the path of the csv for each pd.read_csv command.
+'''
+
+# Wang HSG results
+df_Wang_HSG = pd.read_csv(r"C:\Users\14405\Downloads\Wang HSG.csv", header=None)
+D_Wang_HSG = df_Wang_HSG.iloc[:, 0].tolist()
+S_Wang_HSG = df_Wang_HSG.iloc[:, 1].tolist()
+
+# Wang V-79 results
+df_Wang_V79 = pd.read_csv(r"C:\Users\14405\Downloads\Wang V79.csv", header=None)
+D_Wang_V79 = df_Wang_V79.iloc[:, 0].tolist()
+S_Wang_V79 = df_Wang_V79.iloc[:, 1].tolist()
+
+# Experimental HSG results
+df_Exp_HSG = pd.read_csv(r"C:\Users\14405\Downloads\Experimental HSG.csv", header=None)
+D_Exp_HSG = df_Exp_HSG.iloc[:, 0].tolist()
+S_Exp_HSG = df_Exp_HSG.iloc[:, 1].tolist()
+
+# Experimental V-79 results
+df_Exp_V79 = pd.read_csv(r"C:\Users\14405\Downloads\Experimental V79.csv", header=None)
+D_Exp_V79 = df_Exp_V79.iloc[:, 0].tolist()
+S_Exp_V79 = df_Exp_V79.iloc[:, 1].tolist()
+
+# Plotting
+
+# Figure 1: 
+with plt.xkcd():
+    fig1, (ax1, ax2) = plt.subplots(1, 2)
+    
+    ax1.plot(D, S_cell[0], marker="o", color='purple', label="Direct and indirect damage")
+    ax1.plot(D_Wang_HSG, S_Wang_HSG, color='blue', linestyle='--', linewidth=3, label="Wang results")
+    ax1.scatter(D_Exp_HSG, S_Exp_HSG, color='red',label='Experimental results')
+    ax1.set_ylabel("Surviving Fraction")
+    ax1.set_xlabel("Radiation Dose (Gy)")
+    ax1.set_yscale("log")
+    ax1.set_title("HSG Cells")
+    
+    ax2.plot(D, S_cell[1], marker="o", color='purple',label='Direct and Indirect damage')
+    ax2.plot(D_Wang_V79, S_Wang_V79, color='blue', linestyle='--', linewidth=3,label='Wang results')
+    ax2.scatter(D_Exp_V79, S_Exp_V79, color='red',label='Experimental results')
+    ax2.set_xlabel("Radiation Dose (Gy)")
+    ax2.set_yscale("log")
+    ax2.set_title("V79 Cells")
+    ax2.legend(loc='best')
+    
+    fig1.suptitle(r'C-12 Cell Survival at LET=30 keV/$\mu$m', x=0.53, y=0.98, ha='center', fontsize=24)
+    plt.tight_layout()
+    plt.show()
